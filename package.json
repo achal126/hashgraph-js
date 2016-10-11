@@ -22,11 +22,6 @@
   "homepage": "https://github.com/buhrmi/hashgraph#readme",
   "dependencies": {
     "co": "^4.6.0",
-    "fs-pull-blob-store": "^0.3.0",
-    "ipfs": "^0.16.0",
-    "lodash": "^4.16.1",
-    "lodash.isfunction": "^3.0.8",
-    "multihashes": "^0.2.2",
-    "pull-defer": "^0.2.2"
+    "ipfs": "^0.16.0"
   }
 }

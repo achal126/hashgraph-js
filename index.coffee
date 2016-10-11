@@ -1,7 +1,7 @@
 EventEmitter = require('events')
 # IPFS = require('ipfs')
 co = require('co')
-path = require('path')
+ospath = require('path')
 os = require('os')
 # mh = require('multihashes')
 
@@ -9,12 +9,54 @@ os = require('os')
 spawn = require('child_process').spawn
 
 defaultOptions = {
-  path: path.join(os.homedir(), '.hashgraph')
+  path: ospath.join(os.homedir(), '.hashgraph')
 }
 
-Array.prototype.rand = -> this[Math.floor(Math.random() * (this.length))]
+Array.prototype.rand = -> if this.length == 0 then null else this[Math.floor(Math.random() * (this.length))]
+
+
+toposort = (nodes, parents) ->
+  seen = {}
+  visit = (u) ->
+    if seen[u]?
+      if seen[u] == 0
+        throw 'not a DAG'
+    else if u in nodes
+      seen[u] = 0
+      for v in parents(u)
+          yield from visit(v)
+      seen[u] = 1
+      yield u
+  for u in nodes
+      yield from visit(u)
+
+
+bfs = (s, succ) ->
+  seen = [s]
+  q = [s]
+  while q
+    u = q.unshift()
+    yield u
+    for v in succ(u)
+      if not v in seen
+        seen.add(v)
+        q.append(v)
+
+
+dfs = (s, succ) ->
+  seen = []
+  q = [s]
+  while q
+    u = q.pop()
+    yield u
+    seen.add(u)
+    for v in succ(u)
+      if v not in seen
+        q.append(v)
+
 
 hashgraph = (_options) ->
+  # private node configuration vars
   options = Object.assign({}, defaultOptions, _options)
   path = options.path
   knownPeerIDs = []
@@ -24,6 +66,13 @@ hashgraph = (_options) ->
   head = null
   running = false
   payloadsForNextSync = []
+  
+  # Private Algorithm Vars
+  # These have to be rebuild every time the client starts. might take a long time if it's big.
+  height = {}
+  famous = {}
+  canSee = {}
+  round = {}
   
   ########## Private
   publishEvent = (ownParentHash, otherParentHash, myPeerID, unixTimeMilli, payload) ->
@@ -45,16 +94,32 @@ hashgraph = (_options) ->
   getHead = (peerID = myPeerID) ->
     ipfs.resolve(peerID)
   
-  mainLoop = ->  
+  mainLoop = co.wrap ->
+    console.log("Main Loop Starting")
     c = knownPeerIDs.rand()
-    newEvents = yield sync(c, payloadsForNextSync)
-    divideRounds(newEvents)
-    newC = decideFame()
-    findOrder(newC)
+    if (c)
+      newEvents = yield sync(c, payloadsForNextSync).catch console.error
+      console.log('new are', newEvents)
+      divideRounds(newEvents)
+      newC = decideFame()
+      findOrder(newC)
+      # TODO: emit consensus event
     setTimeout(mainLoop, 1000) if running
   
+  divideRounds = ->
+    true # TODO
+  
+  parents = co.wrap (u) ->
+    [u] # TODO
+  
+  decideFame = ->
+    [] # TODO
+    
+  findOrder = (newC) ->
+    true # TODO
   
   sync = co.wrap (c, payload) ->
+    console.log('Syncing with ', c)
     remoteHead = yield getHead(c)
     
     newEvents = bfs remoteHead, (u) -> (p for p in parents(u) if p not in height)
@@ -111,7 +176,9 @@ hashgraph = (_options) ->
   
   hashgraph.start = ->
     running = true
+    console.log('calling main loop')
     mainLoop()
+    console.log('after calling')
     
   hashgraph.stop = ->
     running = false

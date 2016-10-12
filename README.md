@@ -4,6 +4,8 @@ This is a [hashgraph](https://en.wikipedia.org/wiki/Hashgraph) implementation wr
 
 The goal of this project is a hashgraph impelementation that can be used in any javascript project that is run on several nodes that require some kind of consensus. For example for a replicated log, stock exchange, ledger, state machine, etc.
 
+The interesting feature of this implementation is that you can configure your node to only include a defined set of remote nodes in your consensus group (like a trusted network) while at the same time have all transactions publicly available using IPFS as underlying storage backend.
+
 ## Specification
 
 For a formal specification of the hashgraph and the hashgraph consensus, please refer to the [white paper](http://www.swirlds.com/downloads/SWIRLDS-TR-2016-01.pdf). The following specification just maps the abstract idea described in the whitepaper to an existing implementation.

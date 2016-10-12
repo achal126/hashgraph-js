@@ -2,26 +2,26 @@
 
 spawn = require('child_process').spawn
 
-run = (args, input) ->
-  new Promise (resolve, reject) ->
-    process = spawn('ipfs', args)
-    out = ''
-    process.stderr.on 'data', (data) ->
-      reject data.toString()
-    process.stdout.on 'data', (data) ->
-      out += data.toString()
-    process.on 'exit', (code) ->      
-      if code == 0
-        resolve(out) 
-      if code == 1
-        reject(out)
-    process.stdin.write(input) if input
-    process.stdin.end()
-
-
 ipfs = (path) ->
-  process.env.IPFS_PATH = path
   
+  run = (args, input) ->
+    new Promise (resolve, reject) ->
+      process.env.IPFS_PATH = path if path?
+      childProcess = spawn('ipfs', args)
+      
+      out = ''
+      childProcess.stderr.on 'data', (data) ->
+        reject data.toString()
+      childProcess.stdout.on 'data', (data) ->
+        out += data.toString()
+      childProcess.on 'exit', (code) ->      
+        if code == 0
+          resolve(out) 
+        if code == 1
+          reject(out)
+      childProcess.stdin.write(input) if input
+      childProcess.stdin.end()
+
   publish: (value) ->
     run(['name', 'publish', value])
   
@@ -32,13 +32,21 @@ ipfs = (path) ->
           resolve(out.replace('/ipfs/','').replace('\n',''))
         .catch reject
   
+  # Returns a promise that resolves to the hash of the added object
   putObject: (data) ->
     new Promise (resolve, reject) ->
       run(['object', 'put'], data)
         .then (out) ->
           resolve(out.replace('added ','').replace('\n',''))
-        .catch ->
-          reject()
+        .catch reject
+  
+  # Returns a promise that resolves to the data of the requested hash
+  getObject: (hash) ->
+    new Promise (resolve, reject) ->
+      run(['object', 'get'], data)
+        .then (out) ->
+          resolve(out)
+        .catch reject
   
   getPeerInfo: ->
     new Promise (resolve, reject) ->

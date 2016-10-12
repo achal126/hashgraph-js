@@ -9,7 +9,8 @@ os = require('os')
 spawn = require('child_process').spawn
 
 defaultOptions = {
-  path: ospath.join(os.homedir(), '.hashgraph')
+  path: ospath.join(os.homedir(), '.hashgraph'),
+  logPrefix: ''
 }
 
 Array.prototype.rand = -> if this.length == 0 then null else this[Math.floor(Math.random() * (this.length))]
@@ -30,18 +31,20 @@ toposort = (nodes, parents) ->
   for u in nodes
       yield from visit(u)
 
-
-bfs = (s, succ) ->
+# Returns an array of all hashes visited during BFS lookup
+# successor promise has to resolve into empty array to signal end
+bfs = co.wrap (s, succ) ->
   seen = [s]
   q = [s]
+  visited = []
   while q
     u = q.unshift()
-    yield u
-    for v in succ(u)
+    visited.push(u)
+    for v in yield succ(u)
       if not v in seen
         seen.add(v)
         q.append(v)
-
+  return visited
 
 dfs = (s, succ) ->
   seen = []
@@ -75,6 +78,13 @@ hashgraph = (_options) ->
   round = {}
   
   ########## Private
+  log = (args...) ->
+    console.log(options.logPrefix, args...)
+  
+  error = (args...) ->
+    console.error(options.logPrefix, args...)
+  
+  
   publishEvent = (ownParentHash, otherParentHash, myPeerID, unixTimeMilli, payload) ->
     object = {}
     object.Data = JSON.stringify(c: myPeerID, t: unixTimeMilli, d: payload)
@@ -82,6 +92,11 @@ hashgraph = (_options) ->
     object.Links.push({Name: '0', Hash: ownParentHash}) if ownParentHash
     object.Links.push({Name: '1', Hash: otherParentHash}) if otherParentHash
     ipfs.putObject(JSON.stringify(object))
+    
+  parents = co.wrap (u) ->
+    json = yield ipfs.getObject(u)
+    obj = JSON.parse(json)
+    return (link['Hash'] for link in obj['Links'])
     
   setHead = (eventHash) ->
     new Promise (resolve, reject) ->
@@ -95,22 +110,21 @@ hashgraph = (_options) ->
     ipfs.resolve(peerID)
   
   mainLoop = co.wrap ->
-    console.log("Main Loop Starting")
     c = knownPeerIDs.rand()
     if (c)
-      newEvents = yield sync(c, payloadsForNextSync).catch console.error
-      console.log('new are', newEvents)
+      log('Start Sync with', c)
+      newEvents = yield sync(c, payloadsForNextSync).catch error
       divideRounds(newEvents)
       newC = decideFame()
       findOrder(newC)
       # TODO: emit consensus event
+    else
+      log('no nodes to sync')
     setTimeout(mainLoop, 1000) if running
   
   divideRounds = ->
     true # TODO
   
-  parents = co.wrap (u) ->
-    [u] # TODO
   
   decideFame = ->
     [] # TODO
@@ -118,11 +132,9 @@ hashgraph = (_options) ->
   findOrder = (newC) ->
     true # TODO
   
-  sync = co.wrap (c, payload) ->
-    console.log('Syncing with ', c)
-    remoteHead = yield getHead(c)
-    
-    newEvents = bfs remoteHead, (u) -> (p for p in parents(u) if p not in height)
+  sync = co.wrap (remoteNodeID, payload) ->
+    remoteHead = yield getHead(remoteNodeID)
+    newEvents = yield bfs remoteHead, co.wrap (u) -> (p for p in yield(parents(u)) if p not in height)
     
     #  new_evs = tuple(reversed(bfs((remote_head,),
     #             lambda u: (p for p in parents(u) if p not in self.height))))
@@ -158,14 +170,14 @@ hashgraph = (_options) ->
     ipfs = require('./go-ipfs-adapter')(path)
     info = yield ipfs.getPeerInfo()
     if info
-      console.log("Using Hashgraph Repo found in #{path}")
+      log("Using Hashgraph Repo found in #{path}")
       myPeerID = info.ID
       head = yield getHead(myPeerID)  
       hashgraph.emit('ready')
       Promise.resolve(hashgraph)
 
     else
-      console.log("Initializing a new Hashgraph Repo in #{path}")
+      log("Initializing a new Hashgraph Repo in #{path}")
       yield ipfs.init()
       info = yield ipfs.getPeerInfo()
       myPeerID = info.ID
@@ -176,9 +188,7 @@ hashgraph = (_options) ->
   
   hashgraph.start = ->
     running = true
-    console.log('calling main loop')
     mainLoop()
-    console.log('after calling')
     
   hashgraph.stop = ->
     running = false

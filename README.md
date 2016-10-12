@@ -18,9 +18,18 @@ The `Links` of the node point to the parents of the event.
 
     Links: [{"Name": "0", "Hash": ownParentHash}, {"Name": "1", "Hash": otherParentHash}]
 
+## Tests
+
+Currently this code does not use a real testing framework. 
+
+The following script sets up multiple hashgraph repositories in `~/.hashgraph_test_X` and runs multiple nodes to test the consensus mechanism. Be sure to run a local IPFS daemon while running the tests.
+
+    coffee tests/test_hashgraph.coffee
+
+You can safely delete the repositories if you're not using them anymore.
+
 
 ## Getting Started
-
 
 ### Installation
 

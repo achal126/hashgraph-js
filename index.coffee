@@ -73,18 +73,19 @@ hashgraph = (_options) ->
   
   # Private Algorithm Vars
   # These have to be rebuild every time the client starts. might take a long time if the hashgraph is large. maybe we can persist these between restart
-  heightTable = {} # Stores the height of events in the hashgraph
-  famousTable = {} # Stores weither or not an event is famous
-  canSeeTable = {} # Stores a list of events that can be seen by other events
-  roundTable = {} 
+  heightTable =    {} # Stores the height of events in the hashgraph
+  famousTable =    {} # Stores weither or not an event is famous
+  canSeeTable =    {} # Stores a list of events that can be seen by other events
+  roundTable =     {}
+  witnessesTable = {}
   tbd = [] # Stores events which's order has yet to be determined
   
   ########## Private
   log = (args...) ->
     console.log(options.logPrefix, args...)
   
-  error = (args...) ->
-    console.error(options.logPrefix, args...)
+  error = (error) ->
+    console.error(options.logPrefix, error.stack || error)
   
   # An "Event" in this implementation is an ipfs object
   # event = {Data: {c: peerId, t: unixTime, d: payload}, Links: [{Name: '', Hash: ''}]}
@@ -99,6 +100,12 @@ hashgraph = (_options) ->
   getParents = co.wrap (hash) ->
     event = getEvent(hash)
     return (link['Hash'] for link in event['Links'])
+    
+  highest = (hash1, hash2) ->
+    if higher(hash1, hash2) then hash1 else hash2
+    
+  higher = (hash1, hash2) ->
+    hash1 && hash2 && height[hash1] >= height[hash2]
     
   getEvent = co.wrap (hash) ->
     # TODO: cache in memory
@@ -117,22 +124,67 @@ hashgraph = (_options) ->
   getHead = (peerID = myPeerID) ->
     ipfs.resolve(peerID)
   
+  getStake = (nodeId) ->
+    return 1
+  
+  minStake = () ->
+    # Such byzantine. Very fairness. Wow.
+    Math.ceil(knownPeerIDs.length * 2 / 3)
+  
+  stronglySeen = (eventHash, r) ->
+    hits = {}
+    for c, k in canSeeTable[eventHash]
+      if roundTable[k] == r
+        for c2, k2 in canSeeTable[k]
+          if roundTable[k2] == r
+            hits[c2] = 0 unless hits[c2]?
+            hits[c2] += getStake(c)
+    return (c for c, n of hits when n > minStake())
+
+  
   mainLoop = co.wrap ->
     c = knownPeerIDs.rand()
     if (c)
       log('Start Sync with', c)
       newEvents = yield sync(c).catch error
-      divideRounds(newEvents)
-      newC = decideFame()
-      findOrder(newC)
-      # TODO: emit consensus event
+      if newEvents
+        divideRounds(newEvents)
+        newC = decideFame()
+        findOrder(newC)
+        # TODO: emit consensus event
     else
       log('no nodes to sync')
-    setTimeout(mainLoop, 1000) if running
+    setTimeout((-> mainLoop().catch(error)), 1000) if running
   
-  divideRounds = ->
-    true # TODO
-  
+  divideRounds = (newEventHashes) ->
+    for eventHash in newEventHashes
+      event = getEvent(eventHash)
+      eventNodeId = event.Data.c
+      canSeeTable[eventHash] = {"#{eventNodeId}": eventHash}
+      
+      if event.Links.length == 0 # root event
+        roundTable[eventHash] = 0
+        witnessesTable[0] = {} unless witnessesTable[0]?
+        witnessesTable[0][eventNodeId] = eventHash
+      else
+        r = Math.max(event.Links[0].Hash, event.Links[1].Hash)
+        
+        p0 = canSeeTable[event.Links[0].Hash]
+        p1 = canSeeTable[event.Links[1].Hash]
+        
+        for nodeId in Object.keys(p0)
+          canSeeTable[eventHash][nodeId] = highest(p0[nodeId], p1[nodeId])
+        for nodeId in Object.keys(p1)
+          canSeeTable[eventHash][nodeId] = highest(p0[nodeId], p1[nodeId])
+        
+        if stronglySeen(eventHash, r).length > minStake()
+          roundTable[eventHash] = r + 1
+        else
+          roundTable[eventHash] = r
+          
+        if roundTable[eventHash] > roundTable[event.Links[0].Hash]
+          witnessesTable[roundTable[eventHash]] = {} unless witnessesTable[roundTable[eventHash]]?
+          witnessesTable[roundTable[eventHash]][eventNodeId] = eventHash
   
   decideFame = ->
     [] # TODO
@@ -161,14 +213,13 @@ hashgraph = (_options) ->
   
   sync = co.wrap (remoteNodeId) ->
     remoteHead = yield getHead(remoteNodeId)
-    newEventHashes = yield bfs remoteHead, co.wrap (u) -> (p for p in yield(getParents(u)) unless heightTable[p]?)
+    newEventHashes = yield bfs remoteHead, co.wrap (u) -> (p for p in yield(getParents(u)) when !heightTable[p]?)
     
     for newEventHash in newEventHashes
       assert yield eventIsValid(newEventHash)
       
       tbd.add(newEventHash)
       p = yield(getParents(newEventHash))
-      
       if p.length == 0
         heightTable[newEventHash] = 0
       else
@@ -212,7 +263,7 @@ hashgraph = (_options) ->
   hashgraph.start = ->
     return if running
     running = true
-    mainLoop()
+    mainLoop().catch error
     
   hashgraph.stop = ->
     running = false

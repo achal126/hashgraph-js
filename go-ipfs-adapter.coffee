@@ -42,11 +42,10 @@ ipfs = (path) ->
   
   # Returns a promise that resolves to the data of the requested hash
   getObject: (hash) ->
-    new Promise (resolve, reject) ->
-      run(['object', 'get'], data)
-        .then (out) ->
-          resolve(out)
-        .catch reject
+    run(['object', 'get', hash])
+          
+  pin: (hash) ->
+    run(['pin', 'add', hash])
   
   getPeerInfo: ->
     new Promise (resolve, reject) ->

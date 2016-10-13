@@ -1,11 +1,10 @@
 EventEmitter = require('events')
-# IPFS = require('ipfs')
 co = require('co')
 ospath = require('path')
 os = require('os')
 # mh = require('multihashes')
 
-# TODO: use javascript ipfs implementation instead of spawning `ipfs`. But jsipfs does not support IPNS.
+# TODO: use javascript ipfs implementation instead of spawning `ipfs` process when they've implemented IPNS in javascript
 spawn = require('child_process').spawn
 
 defaultOptions = {
@@ -16,7 +15,7 @@ defaultOptions = {
 Array.prototype.rand = -> if this.length == 0 then null else this[Math.floor(Math.random() * (this.length))]
 
 
-toposort = (nodes, parents) ->
+toposort = (nodes, getParents) ->
   seen = {}
   visit = (u) ->
     if seen[u]?
@@ -24,7 +23,7 @@ toposort = (nodes, parents) ->
         throw 'not a DAG'
     else if u in nodes
       seen[u] = 0
-      for v in parents(u)
+      for v in getParents(u)
           yield from visit(v)
       seen[u] = 1
       yield u
@@ -46,16 +45,18 @@ bfs = co.wrap (s, succ) ->
         q.append(v)
   return visited
 
-dfs = (s, succ) ->
+dfs = co.wrap (s, succ) ->
   seen = []
   q = [s]
+  visited = []
   while q
     u = q.pop()
-    yield u
+    visited.push(u)
     seen.add(u)
-    for v in succ(u)
+    for v in yield succ(u)
       if v not in seen
         q.append(v)
+  return visited
 
 
 hashgraph = (_options) ->
@@ -71,11 +72,12 @@ hashgraph = (_options) ->
   payloadsForNextSync = []
   
   # Private Algorithm Vars
-  # These have to be rebuild every time the client starts. might take a long time if it's big.
-  height = {}
-  famous = {}
-  canSee = {}
-  round = {}
+  # These have to be rebuild every time the client starts. might take a long time if the hashgraph is large. maybe we can persist these between restart
+  heightTable = {} # Stores the height of events in the hashgraph
+  famousTable = {} # Stores weither or not an event is famous
+  canSeeTable = {} # Stores a list of events that can be seen by other events
+  roundTable = {} 
+  tbd = [] # Stores events which's order has yet to be determined
   
   ########## Private
   log = (args...) ->
@@ -84,25 +86,31 @@ hashgraph = (_options) ->
   error = (args...) ->
     console.error(options.logPrefix, args...)
   
-  
-  publishEvent = (ownParentHash, otherParentHash, myPeerID, unixTimeMilli, payload) ->
+  # An "Event" in this implementation is an ipfs object
+  # event = {Data: {c: peerId, t: unixTime, d: payload}, Links: [{Name: '', Hash: ''}]}
+  publishEvent = (ownParentHash, otherParentHash, myPeerID, unixTimestamp, payload) ->
     object = {}
-    object.Data = JSON.stringify(c: myPeerID, t: unixTimeMilli, d: payload)
+    object.Data = JSON.stringify(c: myPeerID, t: unixTimestamp, d: payload)
     object.Links = []
     object.Links.push({Name: '0', Hash: ownParentHash}) if ownParentHash
     object.Links.push({Name: '1', Hash: otherParentHash}) if otherParentHash
     ipfs.putObject(JSON.stringify(object))
     
-  parents = co.wrap (u) ->
-    json = yield ipfs.getObject(u)
-    obj = JSON.parse(json)
-    return (link['Hash'] for link in obj['Links'])
+  getParents = co.wrap (hash) ->
+    event = getEvent(hash)
+    return (link['Hash'] for link in event['Links'])
     
-  setHead = (eventHash) ->
+  getEvent = co.wrap (hash) ->
+    # TODO: cache in memory
+    yield ipfs.pin(hash)
+    json = yield ipfs.getObject(hash)
+    return JSON.parse(json)
+    
+  setHead = (hash) ->
     new Promise (resolve, reject) ->
-      ipfs.publish(eventHash)
+      ipfs.publish(hash)
         .then ->
-          head = eventHash
+          head = hash
           resolve()
         .catch reject
   
@@ -113,7 +121,7 @@ hashgraph = (_options) ->
     c = knownPeerIDs.rand()
     if (c)
       log('Start Sync with', c)
-      newEvents = yield sync(c, payloadsForNextSync).catch error
+      newEvents = yield sync(c).catch error
       divideRounds(newEvents)
       newC = decideFame()
       findOrder(newC)
@@ -132,31 +140,47 @@ hashgraph = (_options) ->
   findOrder = (newC) ->
     true # TODO
   
-  sync = co.wrap (remoteNodeID, payload) ->
-    remoteHead = yield getHead(remoteNodeID)
-    newEvents = yield bfs remoteHead, co.wrap (u) -> (p for p in yield(parents(u)) if p not in height)
+  assert = (assertion) ->
+    assertion # TODO
     
-    #  new_evs = tuple(reversed(bfs((remote_head,),
-    #             lambda u: (p for p in parents(u) if p not in self.height))))
-     # 
-    #     for u in new_evs:
-    #         assert is_valid_event(u)
-     # 
-    #         pin_event(u)
-     # 
-    #         self.tbd.add(u)
-    #         p = parents(u)
-    #         if p == ():
-    #             self.height[u] = 0
-    #         else:
-    #             self.height[u] = max(self.height[x] for x in p) + 1
-     # 
-    #     h = pub_event(Event((get_head(self.id), remote_head),
-    #                         self.id, time(), payload))
-    #     set_head(h)
-     # 
-    #     return new + (h,)  
+  # An event is only valid if either:
+  # 1. It has no parents
+  # 2. The node of the first parent event is the event's node
+  eventIsValid = co.wrap (eventHash) ->
+    event = getEvent(eventHash)
+    
+    return true if event.Links.length == 0
+    
+    ownParentEvent = yield getEvent(event.Links[0].Hash)
+    otherParentEvent = yield getEvent(event.Links[1].Hash)
+    
+    return ownParentEvent.Data.c == event.Data.c && otherParentEvent.Data.c != event.Data.c
+    
+  pinEvent = (event) ->
+    ipfs.pin(event)
   
+  sync = co.wrap (remoteNodeId) ->
+    remoteHead = yield getHead(remoteNodeId)
+    newEventHashes = yield bfs remoteHead, co.wrap (u) -> (p for p in yield(getParents(u)) unless heightTable[p]?)
+    
+    for newEventHash in newEventHashes
+      assert yield eventIsValid(newEventHash)
+      
+      tbd.add(newEventHash)
+      p = yield(getParents(newEventHash))
+      
+      if p.length == 0
+        heightTable[newEventHash] = 0
+      else
+        heightTable[newEventHash] = Math.max(heightTable[p[0]], heightTable[p[1]]) + 1
+      
+    ownNewEventHash = yield publishEvent(head, remoteHead, myPeerID, new Date().getTime() / 1000, payloadsForNextSync)
+    payloadsForNextSync = []
+    yield setHead(ownNewEventHash)
+    
+    newEventHashes.push(ownNewEventHash)
+    return newEventHashes
+    
   ########### Public
   hashgraph.info = ->
     return {
@@ -173,20 +197,20 @@ hashgraph = (_options) ->
       log("Using Hashgraph Repo found in #{path}")
       myPeerID = info.ID
       head = yield getHead(myPeerID)  
-      hashgraph.emit('ready')
-      Promise.resolve(hashgraph)
 
     else
       log("Initializing a new Hashgraph Repo in #{path}")
       yield ipfs.init()
       info = yield ipfs.getPeerInfo()
       myPeerID = info.ID
-      hash = yield publishEvent(null, null, myPeerID, new Date().getTime() / 1000, null)
+      hash = yield publishEvent(null, null, myPeerID, new Date().getTime() / 1000, [])
       yield setHead(hash)
-      hashgraph.emit('ready')
-      Promise.resolve(hashgraph)
+      
+    hashgraph.emit('ready')
+    Promise.resolve(hashgraph)
   
   hashgraph.start = ->
+    return if running
     running = true
     mainLoop()
     

@@ -1,22 +1,23 @@
+# For a proof-of-correctness of the code below go to... uhm... ah... hello how are you?
+
 EventEmitter = require('events')
 co = require('co')
 ospath = require('path')
 os = require('os')
-# mh = require('multihashes')
-
-# TODO: use javascript ipfs implementation instead of spawning `ipfs` process when they've implemented IPNS in javascript
 spawn = require('child_process').spawn
+
+C = 6
 
 defaultOptions = {
   path: ospath.join(os.homedir(), '.hashgraph'),
   logPrefix: ''
 }
 
-C = 6
 
 Array.prototype.rand = -> if this.length == 0 then null else this[Math.floor(Math.random() * (this.length))]
 Array.prototype.merge = (other) -> this.push(otherVal) for otherVal in other when otherVal not in this
 
+##### Aux functions
 b58alphabet = '123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ'
 b58ToInt = (dec) ->
   decoded = 0
@@ -49,8 +50,6 @@ all = ->
   return false for arg in arguments when !arg
   return true
   
-# Returns an array of all hashes visited during BFS lookup
-# successor promise has to resolve into empty array to signal end
 bfs = co.wrap (s, succ) ->
   seen = [s]
   q = [s]
@@ -91,15 +90,15 @@ hashgraph = (_options) ->
   payloadsForNextSync = []
   
   # Private Algorithm Vars
-  # These have to be rebuild every time the client starts. might take a long time if the hashgraph is large. maybe we can persist these between restart
-  heightTable =    {} # Stores the height of events in the hashgraph
-  famousTable =    {} # Stores weither or not an event is famous
-  canSeeTable =    {} # Stores a list of events that can be seen by other events
-  roundTable =     {}
-  votesTable =     {}
-  witnessesTable = [] # For each round, stores a table with 
-  consensus = [] 
-  tbd = [] # Stores events which's order has yet to be determined
+  # These have to be rebuild every time the client starts. might take a long time if the hashgraph is large. maybe we can persist these between process restarts
+  heightTable =     {} # Stores the height of events in the hashgraph
+  famousTable =     {} # Stores weither or not an event is famous
+  canSeeTable =     {} # Stores a list of events that can be seen by other events
+  roundTable =      {}
+  votesTable =      {}
+  witnessesTables = []  
+  consensus =       [] 
+  tbd =             [] 
   
   ########## Private
   log = (args...) ->
@@ -173,6 +172,18 @@ hashgraph = (_options) ->
     else
       return [true, hits[1]]
   
+  votersIterator = (maxC, maxR) ->
+    for r_ in [(maxC+1)..(maxR+1)]
+      for key, w of witnessesTables[r_]
+        yield [r_, w]
+        
+  undeterminedIterator = (maxC, r_) ->
+    for r in [maxC..r_]
+      if r not in consensus
+        for key, w of witnessesTables[r]
+          if w not in famousTable
+            yield [r, w]
+  
   mainLoop = co.wrap ->
     c = knownPeerIDs.rand()
     if (c)
@@ -195,8 +206,8 @@ hashgraph = (_options) ->
       
       if event.Links.length == 0 # root event
         roundTable[eventHash] = 0
-        witnessesTable[0] = {} unless witnessesTable[0]?
-        witnessesTable[0][eventNodeId] = eventHash
+        witnessesTables[0] = {} unless witnessesTables[0]?
+        witnessesTables[0][eventNodeId] = eventHash
       else
         r = Math.max(event.Links[0].Hash, event.Links[1].Hash)
         
@@ -214,21 +225,23 @@ hashgraph = (_options) ->
           roundTable[eventHash] = r
           
         if roundTable[eventHash] > roundTable[event.Links[0].Hash]
-          witnessesTable[roundTable[eventHash]] = {} unless witnessesTable[roundTable[eventHash]]?
-          witnessesTable[roundTable[eventHash]][eventNodeId] = eventHash
+          witnessesTables[roundTable[eventHash]] = {} unless witnessesTables[roundTable[eventHash]]?
+          witnessesTables[roundTable[eventHash]][eventNodeId] = eventHash
   
   decideFame = ->
-    maxRound = witnessesTable.length - 1
+    maxRound = witnessesTables.length - 1
     maxC = 0
     
     maxC++ while maxC in consensus
     
     done = []
     
-    for r_, y in votersIterator(maxC, maxRound)
+    for val1 of votersIterator(maxC, maxRound)
+      [r_, y] = val1
       votesTable[y] = {} unless votesTable[y]?
-      s = (witnessesTable[r_ - 1][c] for c in stronglySeen(y, r_ - 1))
-      for r, x in undeterminedIterator(maxC, r_)
+      s = (witnessesTables[r_ - 1][c] for c in stronglySeen(y, r_ - 1))
+      for val2 of undeterminedIterator(maxC, r_)
+        [r, x] = val2
         if r_ - r == 1
           votesTable[y][x] = x in s
         else
@@ -246,7 +259,8 @@ hashgraph = (_options) ->
             else
               votesTable[y][x] = !!(b58ToInt(y) % 2)
       
-    newC = (r for r in done when all(w in famousTable for w in (witnessesTable[r][key] for key in Object.keys(witnessesTable[r]))))      
+    newC = (r for r in done when all(w in Object.keys(famousTable) for key, w of witnessesTables[r]))      
+    
     consensus.merge(newC)
     
     return newC

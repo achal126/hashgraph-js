@@ -12,8 +12,23 @@ defaultOptions = {
   logPrefix: ''
 }
 
-Array.prototype.rand = -> if this.length == 0 then null else this[Math.floor(Math.random() * (this.length))]
+C = 6
 
+Array.prototype.rand = -> if this.length == 0 then null else this[Math.floor(Math.random() * (this.length))]
+Array.prototype.merge = (other) -> this.push(otherVal) for otherVal in other when otherVal not in this
+
+b58alphabet = '123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ'
+b58ToInt = (dec) ->
+  decoded = 0
+  while(dec)
+    alphabetPosition = b58alphabet.indexOf(dec[0]);
+    if (alphabetPosition < 0)
+        throw '"decode" can\'t find "' + dec[0] + '" in the alphabet: "' + b58alphabet + '"';
+    powerOf = dec.length - 1;
+    decoded += alphabetPosition * (Math.pow(b58alphabet.length, powerOf))
+    dec = dec.substring(1)
+    
+  return decoded
 
 toposort = (nodes, getParents) ->
   seen = {}
@@ -30,6 +45,10 @@ toposort = (nodes, getParents) ->
   for u in nodes
       yield from visit(u)
 
+all = ->
+  return false for arg in arguments when !arg
+  return true
+  
 # Returns an array of all hashes visited during BFS lookup
 # successor promise has to resolve into empty array to signal end
 bfs = co.wrap (s, succ) ->
@@ -77,7 +96,9 @@ hashgraph = (_options) ->
   famousTable =    {} # Stores weither or not an event is famous
   canSeeTable =    {} # Stores a list of events that can be seen by other events
   roundTable =     {}
-  witnessesTable = {}
+  votesTable =     {}
+  witnessesTable = [] # For each round, stores a table with 
+  consensus = [] 
   tbd = [] # Stores events which's order has yet to be determined
   
   ########## Private
@@ -141,6 +162,16 @@ hashgraph = (_options) ->
             hits[c2] += getStake(c)
     return (c for c, n of hits when n > minStake())
 
+  majority = (arrays)->
+    hits = [0, 0]
+    for arr in arrays
+      s=arr[0]
+      x=arr[1]
+      hits[parseInt(x)] += s
+    if hits[0] > hits[1]
+      return [false, hits[0]]
+    else
+      return [true, hits[1]]
   
   mainLoop = co.wrap ->
     c = knownPeerIDs.rand()
@@ -187,7 +218,39 @@ hashgraph = (_options) ->
           witnessesTable[roundTable[eventHash]][eventNodeId] = eventHash
   
   decideFame = ->
-    [] # TODO
+    maxRound = witnessesTable.length - 1
+    maxC = 0
+    
+    maxC++ while maxC in consensus
+    
+    done = []
+    
+    for r_, y in votersIterator(maxC, maxRound)
+      votesTable[y] = {} unless votesTable[y]?
+      s = (witnessesTable[r_ - 1][c] for c in stronglySeen(y, r_ - 1))
+      for r, x in undeterminedIterator(maxC, r_)
+        if r_ - r == 1
+          votesTable[y][x] = x in s
+        else
+          # v, t = majority([getStake(getEvent(w).Data.c), votesTable[w][x]] for w in s)
+          [v, t] = majority([1, votesTable[w][x]] for w in s)
+          if (r_ - r) % C != 0
+            if t > minStake()
+              famousTable[x] = v
+              done.push(r)
+            else
+              votesTable[y][x] = v
+          else
+            if t > minStake()
+              votesTable[y][x] = v
+            else
+              votesTable[y][x] = !!(b58ToInt(y) % 2)
+      
+    newC = (r for r in done when all(w in famousTable for w in (witnessesTable[r][key] for key in Object.keys(witnessesTable[r]))))      
+    consensus.merge(newC)
+    
+    return newC
+    
     
   findOrder = (newC) ->
     true # TODO
@@ -213,7 +276,9 @@ hashgraph = (_options) ->
   
   sync = co.wrap (remoteNodeId) ->
     remoteHead = yield getHead(remoteNodeId)
+    
     newEventHashes = yield bfs remoteHead, co.wrap (u) -> (p for p in yield(getParents(u)) when !heightTable[p]?)
+    newEventHashes = newEventHashes.reverse()
     
     for newEventHash in newEventHashes
       assert yield eventIsValid(newEventHash)

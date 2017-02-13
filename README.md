@@ -4,9 +4,7 @@
 
 This is a [hashgraph](https://en.wikipedia.org/wiki/Hashgraph) implementation written in javascript. It is currently in development and not yet ready to be used. **The functionality described below does not work yet.** This implementation uses [IPFS](http://ipfs.io) as storage and networking backend.
 
-The goal of this project is a hashgraph impelementation that can be used in any javascript project that is run on several nodes that require some kind of consensus. For example for a replicated log, stock exchange, ledger, state machine, etc.
-
-The interesting feature of this implementation is that you can configure your node to only include a defined set of remote nodes in your consensus group (similar to a Quorum Set in the [Stellar Consensus Protocol](https://www.stellar.org/blog/stellar-consensus-protocol-proof-code/)) while at the same time have all transactions publicly available backed by IPFS's DAG.
+The goal of this project is a hashgraph impelementation that can be used in any javascript project that is run on several nodes that require a consensus order (globally agreed-upon timestamps) of occured events. For example for a replicated log, stock exchange, ledger, state machine, etc.
 
 ## Specification
 

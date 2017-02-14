@@ -4,7 +4,7 @@
 
 This is a [hashgraph](https://en.wikipedia.org/wiki/Hashgraph) implementation written in javascript. It uses [IPFS](http://ipfs.io) as storage and networking backend. It is currently in development and not yet ready to be used. **The functionality described below does not work yet.**
 
-The goal of this project is a hashgraph impelementation that can be used in any javascript project that is run on several nodes that require a consensus order (globally agreed-upon timestamps) of occured events. The most general use cases are any kinds of distributed state machines.
+The goal of this project is a hashgraph implementation that can be used in any javascript project that is run on several nodes that require a consensus order (globally agreed-upon timestamps) of occured events. The most general use cases are any kinds of distributed state machines.
 
 ## Specification
 

@@ -1,3 +1,5 @@
+# Deprecated in favor of [an implementation in Golang](http://github.com/babbleio/babble).
+
 # Hashgraph
 
 **NOTE: This project is a _proof-of-concept_ and still _in development_. It does not work yet.**

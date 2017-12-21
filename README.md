@@ -2,7 +2,7 @@
 
 # Hashgraph
 
-**NOTE: This project is a _proof-of-concept_ and still _in development_. It does not work yet.**
+**NOTE: This project is a _proof-of-concept_ and still _in development_. It does not work yet. (actually, the code in this particular repo will probably NEVER work. sorry for wasting your time.)**
 
 This is a [hashgraph](https://en.wikipedia.org/wiki/Hashgraph) implementation written in javascript. It uses [IPFS](http://ipfs.io) as storage and networking backend. It is currently in development and not yet ready to be used. **The functionality described below does not work yet.**
 

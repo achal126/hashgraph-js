@@ -1,4 +1,4 @@
-# Deprecated in favor of [an implementation in Golang](http://github.com/hashgraph/babble).
+# Deprecated in favor of [an implementation in Golang](https://github.com/babbleio/babble).
 
 # Hashgraph
 

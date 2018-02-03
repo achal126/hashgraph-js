@@ -85,5 +85,3 @@ After the transaction has been sent to the network, it will try to achieve conse
       // The order of the transactions is guaranteed to be the same among all participating nodes.
     })
 
-
-This is all you need to know to use hashgraph with your own projects. Read on for information on how to use the [hashgraph ledger](http://github.com/buhrmi/hashgraph-ledger).
